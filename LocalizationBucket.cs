@@ -291,6 +291,7 @@ public partial class LocalizationBucket : Node
 			config.TryAdd($"{configIdLastFetchUTC}_{bucketId}", 0);
 
 			lastFetchUTC = config[$"{configIdLastFetchUTC}_{bucketId}"];
+			SetLocale(locales[(int)config[configIdLocaleIndex]]);
 		}
 		else
 		{
