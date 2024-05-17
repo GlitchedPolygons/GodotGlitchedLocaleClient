@@ -360,7 +360,7 @@ public partial class LocalizationBucket : Node
 
 	public void LoadCacheFromDisk()
 	{
-		FileAccess cacheFile = FileAccess.Open($"{cacheDirectory}/{bucketId}", FileAccess.ModeFlags.Read);
+		using FileAccess cacheFile = FileAccess.Open($"{cacheDirectory}/{bucketId}", FileAccess.ModeFlags.Read);
 
 		if (cacheFile is null)
 		{
