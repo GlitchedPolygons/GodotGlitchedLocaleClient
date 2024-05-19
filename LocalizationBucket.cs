@@ -238,6 +238,9 @@ public partial class LocalizationBucket : Node
 	private string configFileName = "config.json";
 
 	[Export]
+	private bool saveLocalizationCacheToDiskOnNodeExitTree = false;
+	
+	[Export]
 	private bool saveLocalizationCacheToDiskOnQuit = false;
 
 	[Export]
@@ -337,7 +340,10 @@ public partial class LocalizationBucket : Node
 	{
 		base._ExitTree();
 
-		WriteCacheToDisk();
+		if (saveLocalizationCacheToDiskOnNodeExitTree)
+		{
+			WriteCacheToDisk();
+		}
 	}
 
 	/// <summary>
