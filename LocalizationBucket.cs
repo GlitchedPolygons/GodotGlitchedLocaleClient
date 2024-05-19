@@ -191,6 +191,10 @@ public partial class LocalizationBucket : Node
 	/// </summary>
 	public bool IsReady { get; private set; }
 
+	public bool RefreshNeeded => cache.IsEmpty || UtcNow - lastFetchUTC > minSecondsBetweenRequests;
+	
+	public string BucketId => bucketId;
+
 	[Export]
 	private string bucketId = string.Empty;
 
@@ -234,6 +238,9 @@ public partial class LocalizationBucket : Node
 	private string configFileName = "config.json";
 
 	[Export]
+	private bool saveLocalizationCacheToDiskOnQuit = false;
+
+	[Export]
 	private Array<string> locales = new()
 	{
 		"en_US.UTF-8",
@@ -250,13 +257,18 @@ public partial class LocalizationBucket : Node
 
 	private ConcurrentDictionary<string, ConcurrentDictionary<string, string>> cache = new();
 
-	private System.Collections.Generic.Dictionary<string, long> config;
+	private static System.Collections.Generic.Dictionary<string, long> config = null;
 
-	private long? lastFetchUTC = null;
+	private long lastFetchUTC = 0;
 
 	private bool refreshing = false;
 
 	private readonly HttpClient httpClient = new();
+	
+	private readonly JsonSerializerOptions prettyPrint = new()
+	{
+		WriteIndented = true
+	};
 
 	private long UtcNow => new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds();
 	private long UtcNowMs => new DateTimeOffset(DateTime.UtcNow).ToUnixTimeMilliseconds();
@@ -274,7 +286,9 @@ public partial class LocalizationBucket : Node
 			dir = DirAccess.Open(cacheDirectory);
 		}
 
-		if (dir.FileExists(configFileName))
+		bool saveConfig = false;
+
+		if (config is null && dir.FileExists(configFileName))
 		{
 			using FileAccess configFile = FileAccess.Open($"{cacheDirectory}/{configFileName}", FileAccess.ModeFlags.Read);
 
@@ -282,27 +296,23 @@ public partial class LocalizationBucket : Node
 			{
 				config = JsonSerializer.Deserialize<System.Collections.Generic.Dictionary<string, long>>(configFile.GetAsText());
 			}
-			catch
+			catch (Exception e)
 			{
-				config = new System.Collections.Generic.Dictionary<string, long>(2);
+				saveConfig = true;
+#if DEBUG
+				GD.PrintErr($"Failed to deserialize localization config.json from disk. Thrown exception: {e.ToString()}");
+#endif
 			}
-
-			config.TryAdd(configIdLocaleIndex, 0);
-			config.TryAdd($"{configIdLastFetchUTC}_{bucketId}", 0);
-
-			lastFetchUTC = config[$"{configIdLastFetchUTC}_{bucketId}"];
-			SetLocale(locales[(int)config[configIdLocaleIndex]]);
 		}
-		else
-		{
-			config = new System.Collections.Generic.Dictionary<string, long>
-			{
-				{ configIdLocaleIndex, 0 },
-				{ $"{configIdLastFetchUTC}_{bucketId}", 0 }
-			};
+		else saveConfig = true;
 
-			WriteConfigToDisk();
-		}
+		config ??= new System.Collections.Generic.Dictionary<string, long>(2);
+
+		config.TryAdd(configIdLocaleIndex, 0);
+		config.TryAdd($"{configIdLastFetchUTC}_{bucketId}", 0);
+
+		lastFetchUTC = config[$"{configIdLastFetchUTC}_{bucketId}"];
+		SetLocale(locales[(int)config[configIdLocaleIndex]], saveConfig);
 
 		httpClient.BaseAddress = new Uri(localeServerBaseUrl);
 
@@ -345,6 +355,11 @@ public partial class LocalizationBucket : Node
 	/// <returns><c>null</c> if the translation couldn't be found in the <see cref="LocalizationBucket"/>'s dictionary; the translated string value otherwise.</returns>
 	public string Translate(string key)
 	{
+		if (RefreshNeeded)
+		{
+			Refresh();
+		}
+		
 		if (!cache.TryGetValue(key, out ConcurrentDictionary<string, string> translations))
 		{
 			return returnTranslationKeyWhenNotFound ? key : null;
@@ -444,8 +459,9 @@ public partial class LocalizationBucket : Node
 	/// will need to refresh their UI labels as well as all the other scripts that make use of translations from this bucket. 
 	/// </summary>
 	/// <param name="locale">The new locale to use (e.g. <c>en_US.UTF-8</c>). This value must be in the list of enabled locales (use <see cref="GetLocales"/> to find out which locales are currently enabled in the <see cref="LocalizationBucket"/>).</param>
+	/// <param name="save">Set this to <c>false</c> if you don't wish to save the locale modification to disk.</param>
 	/// <returns>Whether or not the locale change was successfully applied.</returns>
-	public bool SetLocale(string locale)
+	public bool SetLocale(string locale, bool save = true)
 	{
 		localeIndex = locales.IndexOf(locale);
 
@@ -458,7 +474,10 @@ public partial class LocalizationBucket : Node
 
 		ChangedLocale?.Invoke(locale);
 
-		WriteConfigToDisk();
+		if (save)
+		{
+			WriteConfigToDisk();
+		}
 
 		return true;
 	}
@@ -467,7 +486,7 @@ public partial class LocalizationBucket : Node
 	{
 		using FileAccess configFile = FileAccess.Open($"{cacheDirectory}/{configFileName}", FileAccess.ModeFlags.Write);
 
-		configFile.StoreString(JsonSerializer.Serialize(config));
+		configFile.StoreString(JsonSerializer.Serialize(config, prettyPrint));
 	}
 
 	private async void Refresh()
@@ -476,14 +495,20 @@ public partial class LocalizationBucket : Node
 		{
 			return;
 		}
-		
-		if (!cache.IsEmpty && lastFetchUTC.HasValue && UtcNow - lastFetchUTC < minSecondsBetweenRequests)
+
+		if (!RefreshNeeded)
 		{
+#if DEBUG
+			GD.Print($"Refreshing of localization bucket \"{bucketId}\" cancelled because it's still fresh. {UtcNow - lastFetchUTC} seconds have passed since the last fetch op (minimum amount of seconds between refreshes is {minSecondsBetweenRequests}).");
+#endif
 			return;
 		}
 
 		if (refreshing)
 		{
+#if DEBUG
+			GD.Print($"Refreshing of localization bucket \"{bucketId}\" cancelled because it's already refreshing...");
+#endif
 			return;
 		}
 
@@ -496,7 +521,7 @@ public partial class LocalizationBucket : Node
 
 		lastFetchUTC = UtcNow;
 
-		config[$"{configIdLastFetchUTC}_{bucketId}"] = lastFetchUTC.Value;
+		config[$"{configIdLastFetchUTC}_{bucketId}"] = lastFetchUTC;
 
 		Task task = Task.Run(async () =>
 		{
@@ -529,13 +554,15 @@ public partial class LocalizationBucket : Node
 
 			ResponseBodyDto<TranslationEndpointResponseDto> responseBodyDto = JsonSerializer.Deserialize<ResponseBodyDto<TranslationEndpointResponseDto>>(json);
 
-#if DEBUG // TODO: decide whether or not to keep these debug prints.
+#if DEBUG
 			GD.Print($"Locale server response body: {json}");
 			GD.Print("Deserialized locale server response: " + JsonSerializer.Serialize(responseBodyDto));
 #endif
 
 			if (responseBodyDto != null)
 			{
+				bool save = false;
+				
 				foreach (TranslationEndpointResponseDto translation in responseBodyDto.Items)
 				{
 					if (cache.TryGetValue(translation.Key, out ConcurrentDictionary<string, string> cachedTranslation))
@@ -549,6 +576,13 @@ public partial class LocalizationBucket : Node
 					{
 						cache[translation.Key] = new ConcurrentDictionary<string, string>(translation.Translations);
 					}
+					
+					save = true;
+				}
+				
+				if (save)
+				{
+					WriteCacheToDisk();
 				}
 			}
 		});
@@ -576,9 +610,13 @@ public partial class LocalizationBucket : Node
 	{
 		if (what == NotificationWMCloseRequest)
 		{
-			WriteCacheToDisk();
+			if (saveLocalizationCacheToDiskOnQuit)
+			{
+				WriteCacheToDisk();
+			}
 
 			config[configIdLocaleIndex] = localeIndex;
+			
 			WriteConfigToDisk();
 
 			GetTree().Quit();
