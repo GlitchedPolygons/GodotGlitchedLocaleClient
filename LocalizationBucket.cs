@@ -192,7 +192,7 @@ public partial class LocalizationBucket : Node
 	public bool IsReady { get; private set; }
 
 	public bool RefreshNeeded => cache.IsEmpty || UtcNow - lastFetchUTC > minSecondsBetweenRequests;
-	
+
 	public string BucketId => bucketId;
 
 	[Export]
@@ -239,9 +239,12 @@ public partial class LocalizationBucket : Node
 
 	[Export]
 	private bool saveLocalizationCacheToDiskOnNodeExitTree = false;
-	
+
 	[Export]
 	private bool saveLocalizationCacheToDiskOnQuit = false;
+
+	[Export]
+	private bool verbose = true;
 
 	[Export]
 	private Array<string> locales = new()
@@ -267,7 +270,7 @@ public partial class LocalizationBucket : Node
 	private bool refreshing = false;
 
 	private readonly HttpClient httpClient = new();
-	
+
 	private readonly JsonSerializerOptions prettyPrint = new()
 	{
 		WriteIndented = true
@@ -303,7 +306,7 @@ public partial class LocalizationBucket : Node
 			{
 				saveConfig = true;
 #if DEBUG
-				GD.PrintErr($"Failed to deserialize localization config.json from disk. Thrown exception: {e.ToString()}");
+				GD.PrintErr($"Failed to deserialize localization config file \"{configFileName}\" from disk. Thrown exception: {e.ToString()}");
 #endif
 			}
 		}
@@ -361,11 +364,11 @@ public partial class LocalizationBucket : Node
 	/// <returns><c>null</c> if the translation couldn't be found in the <see cref="LocalizationBucket"/>'s dictionary; the translated string value otherwise.</returns>
 	public string Translate(string key)
 	{
-		if (RefreshNeeded)
+		if (RefreshNeeded && !refreshing)
 		{
 			Refresh();
 		}
-		
+
 		if (!cache.TryGetValue(key, out ConcurrentDictionary<string, string> translations))
 		{
 			return returnTranslationKeyWhenNotFound ? key : null;
@@ -386,7 +389,10 @@ public partial class LocalizationBucket : Node
 		if (cacheFile is null)
 		{
 #if DEBUG
-			GD.Print($"Localization cache file for bucket \"{bucketId}\" not found: fetching & refreshing translations now...");
+			if (verbose)
+			{
+				GD.Print($"Localization cache file for bucket \"{bucketId}\" not found: fetching & refreshing translations now...\n");
+			}
 #endif
 			Refresh();
 		}
@@ -401,6 +407,13 @@ public partial class LocalizationBucket : Node
 			string json = Encoding.UTF8.GetString(memoryStream.ToArray());
 
 			cache = JsonSerializer.Deserialize<ConcurrentDictionary<string, ConcurrentDictionary<string, string>>>(json);
+			
+#if DEBUG
+			if (verbose)
+			{
+				GD.Print($"Localization bucket \"{bucketId}\" loaded from cache file on disk:\n\n{JsonSerializer.Serialize(cache)}\n");
+			}
+#endif
 		}
 
 		Refreshed?.Invoke();
@@ -417,7 +430,10 @@ public partial class LocalizationBucket : Node
 		string json = JsonSerializer.Serialize(cache);
 
 #if DEBUG
-		GD.Print($"Writing localization cache for bucket \"{bucketId}\" to disk: {json}");
+		if (verbose)
+		{
+			GD.Print($"Writing localization cache for bucket \"{bucketId}\" to disk:\n\n{json}\n");
+		}
 #endif
 
 		brotli.Write(Encoding.UTF8.GetBytes(json));
@@ -505,7 +521,10 @@ public partial class LocalizationBucket : Node
 		if (!RefreshNeeded)
 		{
 #if DEBUG
-			GD.Print($"Refreshing of localization bucket \"{bucketId}\" cancelled because it's still fresh. {UtcNow - lastFetchUTC} seconds have passed since the last fetch op (minimum amount of seconds between refreshes is {minSecondsBetweenRequests}).");
+			if (verbose)
+			{
+				GD.Print($"Refreshing of localization bucket \"{bucketId}\" cancelled because it's still fresh. {UtcNow - lastFetchUTC} seconds have passed since the last fetch op (minimum amount of seconds between refreshes is {minSecondsBetweenRequests}).\n");
+			}
 #endif
 			return;
 		}
@@ -513,13 +532,19 @@ public partial class LocalizationBucket : Node
 		if (refreshing)
 		{
 #if DEBUG
-			GD.Print($"Refreshing of localization bucket \"{bucketId}\" cancelled because it's already refreshing...");
+			if (verbose)
+			{
+				GD.Print($"Refreshing of localization bucket \"{bucketId}\" cancelled because it's already refreshing...\n");
+			}
 #endif
 			return;
 		}
 
 #if DEBUG
-		GD.Print($"Refreshing localization bucket \"{bucketId}\" now...");
+		if (verbose)
+		{
+			GD.Print($"Refreshing localization bucket \"{bucketId}\" now...\n");
+		}
 #endif
 		refreshing = true;
 
@@ -561,14 +586,17 @@ public partial class LocalizationBucket : Node
 			ResponseBodyDto<TranslationEndpointResponseDto> responseBodyDto = JsonSerializer.Deserialize<ResponseBodyDto<TranslationEndpointResponseDto>>(json);
 
 #if DEBUG
-			GD.Print($"Locale server response body: {json}");
-			GD.Print("Deserialized locale server response: " + JsonSerializer.Serialize(responseBodyDto));
+			if (verbose)
+			{
+				GD.Print($"Locale server response body for localization bucket \"{bucketId}\":\n\n{json}\n");
+				GD.Print($"Deserialized locale server response for localization bucket \"{bucketId}\":\n\n{JsonSerializer.Serialize(responseBodyDto)}\n");
+			}
 #endif
 
 			if (responseBodyDto != null)
 			{
 				bool save = false;
-				
+
 				foreach (TranslationEndpointResponseDto translation in responseBodyDto.Items)
 				{
 					if (cache.TryGetValue(translation.Key, out ConcurrentDictionary<string, string> cachedTranslation))
@@ -582,10 +610,10 @@ public partial class LocalizationBucket : Node
 					{
 						cache[translation.Key] = new ConcurrentDictionary<string, string>(translation.Translations);
 					}
-					
+
 					save = true;
 				}
-				
+
 				if (save)
 				{
 					WriteCacheToDisk();
@@ -622,7 +650,7 @@ public partial class LocalizationBucket : Node
 			}
 
 			config[configIdLocaleIndex] = localeIndex;
-			
+
 			WriteConfigToDisk();
 
 			GetTree().Quit();
