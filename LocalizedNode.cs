@@ -60,7 +60,7 @@ public partial class LocalizedNode : Node
 		base._EnterTree();
 
 		localizationBucket.Refreshed += LocalizationBucketOnRefreshed;
-		localizationBucket.ChangedLocale += LocalizationBucketOnChangedLocale;
+		LocalizationBucket.ChangedLocale += LocalizationBucketOnChangedLocale;
 
 		LocalizationBucketOnRefreshed();
 	}
@@ -70,7 +70,7 @@ public partial class LocalizedNode : Node
 		base._ExitTree();
 
 		localizationBucket.Refreshed -= LocalizationBucketOnRefreshed;
-		localizationBucket.ChangedLocale -= LocalizationBucketOnChangedLocale;
+		LocalizationBucket.ChangedLocale -= LocalizationBucketOnChangedLocale;
 	}
 
 	private async void LocalizationBucketOnRefreshed()

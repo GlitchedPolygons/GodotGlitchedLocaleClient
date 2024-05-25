@@ -179,7 +179,7 @@ public partial class LocalizationBucket : Node
 	/// <summary>
 	/// This event is raised whenever the <see cref="SetLocale"/> method is called, such that interested subscribers know when to refresh their labels in the UI to reflect the new language setting.
 	/// </summary>
-	public event Action<string> ChangedLocale;
+	public static event Action<string> ChangedLocale;
 
 	/// <summary>
 	/// This event is raised when a connection attempt to the locale server resulted in a failure.
@@ -330,6 +330,35 @@ public partial class LocalizationBucket : Node
 		Refresh();
 	}
 
+	private void OnChangedLocale(string newLocale)
+	{
+		int newLocaleIndex = locales.IndexOf(newLocale);
+
+		if (newLocaleIndex != localeIndex)
+		{
+			SetLocale(newLocale);
+		}
+	}
+
+	public override void _EnterTree()
+	{
+		base._EnterTree();
+
+		ChangedLocale += OnChangedLocale;
+	}
+
+	public override void _ExitTree()
+	{
+		base._ExitTree();
+
+		ChangedLocale -= OnChangedLocale;
+		
+		if (saveLocalizationCacheToDiskOnNodeExitTree)
+		{
+			WriteCacheToDisk();
+		}
+	}
+	
 	/// <summary>
 	/// Checks whether or not the locale server defined in the <see cref="LocalizationBucket"/>'s base URL field is online and reachable.
 	/// </summary>
@@ -337,16 +366,6 @@ public partial class LocalizationBucket : Node
 	public Task<HttpResponseMessage> IsLocaleServerReachable()
 	{
 		return Task.Run(() => httpClient.GetAsync("/api/v1/keys/rsa/public"));
-	}
-
-	public override void _ExitTree()
-	{
-		base._ExitTree();
-
-		if (saveLocalizationCacheToDiskOnNodeExitTree)
-		{
-			WriteCacheToDisk();
-		}
 	}
 
 	/// <summary>
