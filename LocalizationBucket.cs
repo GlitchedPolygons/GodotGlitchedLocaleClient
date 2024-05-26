@@ -336,7 +336,7 @@ public partial class LocalizationBucket : Node
 
 		if (newLocaleIndex != localeIndex)
 		{
-			SetLocale(newLocale);
+			SetLocale(newLocale, false);
 		}
 	}
 
