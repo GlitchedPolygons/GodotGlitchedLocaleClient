@@ -593,7 +593,7 @@ public partial class LocalizationBucket : Node
 				httpContent.Headers.Add("API-Key", apiKey);
 			}
 
-			HttpResponseMessage response = await httpClient.PostAsync(localeServerTranslationEndpoint, httpContent);
+			using HttpResponseMessage response = await httpClient.PostAsync(localeServerTranslationEndpoint, httpContent);
 
 			if (!response.IsSuccessStatusCode)
 			{
